@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>小红书调度器管理</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 800px; margin: 0 auto; }
+        h1 { color: #333; margin-bottom: 20px; }
+        .card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .card h2 { margin-top: 0; color: #666; font-size: 16px; }
+        .status-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #eee; }
+        .status-row:last-child { border-bottom: none; }
+        .status-label { color: #666; }
+        .status-value { font-weight: bold; }
+        .status-value.on { color: #52c41a; }
+        .status-value.off { color: #ff4d4f; }
+        .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin-right: 8px; }
+        .btn-primary { background: #1890ff; color: white; }
+        .btn-success { background: #52c41a; color: white; }
+        .btn-danger { background: #ff4d4f; color: white; }
+        .btn-warning { background: #faad14; color: white; }
+        .btn:hover { opacity: 0.8; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; color: #666; font-size: 14px; }
+        .form-group input, .form-group textarea, .form-group select { width: 100%; padding: 8px; border: 1px solid #d9d9d9; border-radius: 4px; font-size: 14px; }
+        .form-group textarea { min-height: 100px; resize: vertical; }
+        .form-row { display: flex; gap: 15px; }
+        .form-row .form-group { flex: 1; }
+        .actions { margin-top: 15px; }
+        .message { padding: 10px; border-radius: 4px; margin-bottom: 15px; }
+        .message.success { background: #f6ffed; border: 1px solid #b7eb8f; color: #52c41a; }
+        .message.error { background: #fff2f0; border: 1px solid #ffccc7; color: #ff4d4f; }
+        .keywords-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+        .keyword-tag { background: #f0f0f0; padding: 2px 8px; border-radius: 3px; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>小红书调度器管理</h1>
+
+        <div id="message"></div>
+
+        <!-- 状态卡片 -->
+        <div class="card">
+            <h2>运行状态</h2>
+            <div class="status-row">
+                <span class="status-label">登录状态</span>
+                <span id="login-status" class="status-value">检查中...</span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">自动评论</span>
+                <span id="comment-status" class="status-value">-</span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">自动发帖</span>
+                <span id="post-status" class="status-value">-</span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">已评论次数</span>
+                <span id="comment-count" class="status-value">0</span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">已发帖次数</span>
+                <span id="post-count" class="status-value">0</span>
+            </div>
+        </div>
+
+        <!-- 快捷操作 -->
+        <div class="card">
+            <h2>快捷操作</h2>
+            <button class="btn btn-primary" onclick="toggleComment()">切换评论开关</button>
+            <button class="btn btn-primary" onclick="togglePost()">切换发帖开关</button>
+            <button class="btn btn-success" onclick="runComment()">立即评论</button>
+            <button class="btn btn-warning" onclick="runPost()">立即发帖</button>
+        </div>
+
+        <!-- 配置表单 -->
+        <div class="card">
+            <h2>配置设置</h2>
+            <form id="config-form">
+                <!-- MCP 配置 -->
+                <div class="form-group">
+                    <label>MCP 服务地址</label>
+                    <input type="text" id="mcp-url" value="{{.Config.MCP.BaseURL}}">
+                </div>
+
+                <!-- AI 配置 -->
+                <div class="form-group">
+                    <label>AI API 地址</label>
+                    <input type="text" id="ai-url" value="{{.Config.AI.BaseURL}}">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>AI API Key</label>
+                        <input type="password" id="ai-key" value="{{.Config.AI.APIKey}}">
+                    </div>
+                    <div class="form-group">
+                        <label>AI 模型</label>
+                        <input type="text" id="ai-model" value="{{.Config.AI.Model}}">
+                    </div>
+                </div>
+
+                <!-- 评论配置 -->
+                <h3 style="margin: 20px 0 10px; color: #666; font-size: 14px;">评论配置</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>最小间隔(分钟)</label>
+                        <input type="number" id="comment-min" value="{{.Config.Comment.IntervalMin}}">
+                    </div>
+                    <div class="form-group">
+                        <label>最大间隔(分钟)</label>
+                        <input type="number" id="comment-max" value="{{.Config.Comment.IntervalMax}}">
+                    </div>
+                    <div class="form-group">
+                        <label>每次最多评论</label>
+                        <input type="number" id="comment-count-max" value="{{.Config.Comment.MaxComments}}">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>搜索关键词(逗号分隔)</label>
+                    <input type="text" id="comment-keywords" value="{{range $i, $k := .Config.Comment.SearchKeywords}}{{if $i}},{{end}}{{$k}}{{end}}">
+                </div>
+                <div class="form-group">
+                    <label>AI 系统提示词</label>
+                    <textarea id="comment-prompt">{{.Config.Comment.SystemPrompt}}</textarea>
+                </div>
+
+                <!-- 发帖配置 -->
+                <h3 style="margin: 20px 0 10px; color: #666; font-size: 14px;">发帖配置</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>最小间隔(分钟)</label>
+                        <input type="number" id="post-min" value="{{.Config.Post.IntervalMin}}">
+                    </div>
+                    <div class="form-group">
+                        <label>最大间隔(分钟)</label>
+                        <input type="number" id="post-max" value="{{.Config.Post.IntervalMax}}">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>图片目录</label>
+                    <input type="text" id="post-image-dir" value="{{.Config.Post.ImageDir}}">
+                </div>
+                <div class="form-group">
+                    <label>发帖主题(逗号分隔)</label>
+                    <input type="text" id="post-topics" value="{{range $i, $t := .Config.Post.Topics}}{{if $i}},{{end}}{{$t}}{{end}}">
+                </div>
+
+                <div class="actions">
+                    <button type="submit" class="btn btn-primary">保存配置</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // 获取状态
+        function fetchStatus() {
+            fetch('/api/status')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('login-status').textContent = data.login_status ? '已登录' : '未登录';
+                    document.getElementById('login-status').className = 'status-value ' + (data.login_status ? 'on' : 'off');
+
+                    document.getElementById('comment-status').textContent = data.comment_enabled ? '开启' : '关闭';
+                    document.getElementById('comment-status').className = 'status-value ' + (data.comment_enabled ? 'on' : 'off');
+
+                    document.getElementById('post-status').textContent = data.post_enabled ? '开启' : '关闭';
+                    document.getElementById('post-status').className = 'status-value ' + (data.post_enabled ? 'on' : 'off');
+
+                    document.getElementById('comment-count').textContent = data.comment_count;
+                    document.getElementById('post-count').textContent = data.post_count;
+                });
+        }
+
+        // 显示消息
+        function showMessage(text, type) {
+            const msg = document.getElementById('message');
+            msg.textContent = text;
+            msg.className = 'message ' + type;
+            setTimeout(() => { msg.textContent = ''; msg.className = ''; }, 3000);
+        }
+
+        // 切换评论
+        function toggleComment() {
+            fetch('/api/toggle/comment', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    showMessage('评论已' + (data.enabled ? '开启' : '关闭'), 'success');
+                    fetchStatus();
+                });
+        }
+
+        // 切换发帖
+        function togglePost() {
+            fetch('/api/toggle/post', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    showMessage('发帖已' + (data.enabled ? '开启' : '关闭'), 'success');
+                    fetchStatus();
+                });
+        }
+
+        // 立即评论
+        function runComment() {
+            fetch('/api/run/comment', { method: 'POST' })
+                .then(r => r.json())
+                .then(() => showMessage('评论任务已启动', 'success'));
+        }
+
+        // 立即发帖
+        function runPost() {
+            fetch('/api/run/post', { method: 'POST' })
+                .then(r => r.json())
+                .then(() => showMessage('发帖任务已启动', 'success'));
+        }
+
+        // 保存配置
+        document.getElementById('config-form').onsubmit = function(e) {
+            e.preventDefault();
+
+            const config = {
+                mcp: {
+                    base_url: document.getElementById('mcp-url').value
+                },
+                ai: {
+                    base_url: document.getElementById('ai-url').value,
+                    api_key: document.getElementById('ai-key').value,
+                    model: document.getElementById('ai-model').value
+                },
+                comment: {
+                    enabled: document.getElementById('comment-status').textContent === '开启',
+                    interval_min: parseInt(document.getElementById('comment-min').value),
+                    interval_max: parseInt(document.getElementById('comment-max').value),
+                    max_comments: parseInt(document.getElementById('comment-count-max').value),
+                    search_keywords: document.getElementById('comment-keywords').value.split(',').map(s => s.trim()).filter(s => s),
+                    system_prompt: document.getElementById('comment-prompt').value
+                },
+                post: {
+                    enabled: document.getElementById('post-status').textContent === '开启',
+                    interval_min: parseInt(document.getElementById('post-min').value),
+                    interval_max: parseInt(document.getElementById('post-max').value),
+                    image_dir: document.getElementById('post-image-dir').value,
+                    topics: document.getElementById('post-topics').value.split(',').map(s => s.trim()).filter(s => s)
+                }
+            };
+
+            fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(config)
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    showMessage('配置已保存', 'success');
+                } else {
+                    showMessage('保存失败', 'error');
+                }
+            })
+            .catch(() => showMessage('保存失败', 'error'));
+        };
+
+        // 初始化
+        fetchStatus();
+        setInterval(fetchStatus, 5000);
+    </script>
+</body>
+</html>

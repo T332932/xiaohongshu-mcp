@@ -2,15 +2,18 @@ package main
 
 import (
 	"bytes"
+	"embed"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"html/template"
 	"io"
 	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -18,31 +21,34 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+//go:embed templates/*
+var templateFS embed.FS
+
 // Config 调度器配置
 type Config struct {
 	MCP struct {
-		BaseURL string `yaml:"base_url"` // MCP 服务地址
-	} `yaml:"mcp"`
+		BaseURL string `yaml:"base_url" json:"base_url"` // MCP 服务地址
+	} `yaml:"mcp" json:"mcp"`
 	AI struct {
-		BaseURL string `yaml:"base_url"` // AI API 地址 (OpenAI 兼容)
-		APIKey  string `yaml:"api_key"`  // API 密钥
-		Model   string `yaml:"model"`    // 模型名称
-	} `yaml:"ai"`
+		BaseURL string `yaml:"base_url" json:"base_url"` // AI API 地址 (OpenAI 兼容)
+		APIKey  string `yaml:"api_key" json:"api_key"`   // API 密钥
+		Model   string `yaml:"model" json:"model"`       // 模型名称
+	} `yaml:"ai" json:"ai"`
 	Comment struct {
-		Enabled        bool     `yaml:"enabled"`         // 是否启用评论
-		IntervalMin    int      `yaml:"interval_min"`    // 最小间隔(分钟)
-		IntervalMax    int      `yaml:"interval_max"`    // 最大间隔(分钟)
-		SearchKeywords []string `yaml:"search_keywords"` // 搜索关键词列表
-		MaxComments    int      `yaml:"max_comments"`    // 每次最多评论数
-		SystemPrompt   string   `yaml:"system_prompt"`   // AI 系统提示词
-	} `yaml:"comment"`
+		Enabled        bool     `yaml:"enabled" json:"enabled"`                 // 是否启用评论
+		IntervalMin    int      `yaml:"interval_min" json:"interval_min"`       // 最小间隔(分钟)
+		IntervalMax    int      `yaml:"interval_max" json:"interval_max"`       // 最大间隔(分钟)
+		SearchKeywords []string `yaml:"search_keywords" json:"search_keywords"` // 搜索关键词列表
+		MaxComments    int      `yaml:"max_comments" json:"max_comments"`       // 每次最多评论数
+		SystemPrompt   string   `yaml:"system_prompt" json:"system_prompt"`     // AI 系统提示词
+	} `yaml:"comment" json:"comment"`
 	Post struct {
-		Enabled     bool     `yaml:"enabled"`      // 是否启用发帖
-		IntervalMin int      `yaml:"interval_min"` // 最小间隔(分钟)
-		IntervalMax int      `yaml:"interval_max"` // 最大间隔(分钟)
-		Topics      []string `yaml:"topics"`       // 发帖主题列表
-		ImageDir    string   `yaml:"image_dir"`    // 图片目录
-	} `yaml:"post"`
+		Enabled     bool     `yaml:"enabled" json:"enabled"`           // 是否启用发帖
+		IntervalMin int      `yaml:"interval_min" json:"interval_min"` // 最小间隔(分钟)
+		IntervalMax int      `yaml:"interval_max" json:"interval_max"` // 最大间隔(分钟)
+		Topics      []string `yaml:"topics" json:"topics"`             // 发帖主题列表
+		ImageDir    string   `yaml:"image_dir" json:"image_dir"`       // 图片目录
+	} `yaml:"post" json:"post"`
 }
 
 // AIMessage AI 消息
@@ -105,14 +111,24 @@ type PostInfo struct {
 
 var (
 	configPath      string
+	webPort         string
 	config          Config
+	configMutex     sync.RWMutex
 	log             = logrus.New()
 	commentHistory  = make(map[string]time.Time) // 已评论的帖子ID -> 评论时间
 	historyFilePath = "comment_history.json"
+
+	// 状态跟踪
+	lastCommentTime time.Time
+	lastPostTime    time.Time
+	commentCount    int
+	postCount       int
+	statusMutex     sync.RWMutex
 )
 
 func init() {
 	flag.StringVar(&configPath, "config", "config.yaml", "配置文件路径")
+	flag.StringVar(&webPort, "web", ":8080", "Web 管理界面端口")
 }
 
 // loadCommentHistory 加载评论历史
@@ -176,19 +192,17 @@ func main() {
 
 	log.Info("AI 自动发布调度器启动")
 
+	// 启动 Web 管理界面
+	go startWebServer()
+
 	// 检查登录状态
 	if !checkLoginStatus() {
-		log.Fatal("未登录，请先登录小红书")
+		log.Warn("未登录小红书，请通过 Web 界面上传 cookies 或先登录")
 	}
 
 	// 启动调度器
 	stopCh := make(chan struct{})
-	if config.Comment.Enabled {
-		go commentScheduler(stopCh)
-	}
-	if config.Post.Enabled {
-		go postScheduler(stopCh)
-	}
+	go schedulerManager(stopCh)
 
 	// 等待退出信号
 	sigCh := make(chan os.Signal, 1)
@@ -199,6 +213,72 @@ func main() {
 	close(stopCh)
 	time.Sleep(time.Second)
 	log.Info("调度器已关闭")
+}
+
+// schedulerManager 管理调度器
+func schedulerManager(stopCh <-chan struct{}) {
+	commentTicker := time.NewTicker(time.Minute)
+	postTicker := time.NewTicker(time.Minute)
+	defer commentTicker.Stop()
+	defer postTicker.Stop()
+
+	var nextCommentTime, nextPostTime time.Time
+
+	for {
+		configMutex.RLock()
+		commentEnabled := config.Comment.Enabled
+		postEnabled := config.Post.Enabled
+		commentMin := config.Comment.IntervalMin
+		commentMax := config.Comment.IntervalMax
+		postMin := config.Post.IntervalMin
+		postMax := config.Post.IntervalMax
+		configMutex.RUnlock()
+
+		// 初始化下次执行时间
+		if nextCommentTime.IsZero() && commentEnabled {
+			interval := randomInterval(commentMin, commentMax)
+			nextCommentTime = time.Now().Add(time.Duration(interval) * time.Minute)
+			log.Infof("下次评论将在 %d 分钟后", interval)
+		}
+		if nextPostTime.IsZero() && postEnabled {
+			interval := randomInterval(postMin, postMax)
+			nextPostTime = time.Now().Add(time.Duration(interval) * time.Minute)
+			log.Infof("下次发帖将在 %d 分钟后", interval)
+		}
+
+		select {
+		case <-stopCh:
+			return
+		case <-commentTicker.C:
+			if commentEnabled && time.Now().After(nextCommentTime) {
+				if err := doComment(); err != nil {
+					log.Errorf("评论失败: %v", err)
+				} else {
+					statusMutex.Lock()
+					lastCommentTime = time.Now()
+					commentCount++
+					statusMutex.Unlock()
+				}
+				interval := randomInterval(commentMin, commentMax)
+				nextCommentTime = time.Now().Add(time.Duration(interval) * time.Minute)
+				log.Infof("下次评论将在 %d 分钟后", interval)
+			}
+		case <-postTicker.C:
+			if postEnabled && time.Now().After(nextPostTime) {
+				if err := doPost(); err != nil {
+					log.Errorf("发帖失败: %v", err)
+				} else {
+					statusMutex.Lock()
+					lastPostTime = time.Now()
+					postCount++
+					statusMutex.Unlock()
+				}
+				interval := randomInterval(postMin, postMax)
+				nextPostTime = time.Now().Add(time.Duration(interval) * time.Minute)
+				log.Infof("下次发帖将在 %d 分钟后", interval)
+			}
+		}
+	}
 }
 
 // loadConfig 加载配置文件
@@ -231,44 +311,6 @@ func checkLoginStatus() bool {
 		return false
 	}
 	return result.Success && result.Data.LoggedIn
-}
-
-// commentScheduler 评论调度器
-func commentScheduler(stopCh <-chan struct{}) {
-	log.Info("评论调度器已启动")
-	for {
-		// 随机间隔
-		interval := randomInterval(config.Comment.IntervalMin, config.Comment.IntervalMax)
-		log.Infof("下次评论将在 %d 分钟后", interval)
-
-		select {
-		case <-stopCh:
-			return
-		case <-time.After(time.Duration(interval) * time.Minute):
-			if err := doComment(); err != nil {
-				log.Errorf("评论失败: %v", err)
-			}
-		}
-	}
-}
-
-// postScheduler 发帖调度器
-func postScheduler(stopCh <-chan struct{}) {
-	log.Info("发帖调度器已启动")
-	for {
-		// 随机间隔
-		interval := randomInterval(config.Post.IntervalMin, config.Post.IntervalMax)
-		log.Infof("下次发帖将在 %d 分钟后", interval)
-
-		select {
-		case <-stopCh:
-			return
-		case <-time.After(time.Duration(interval) * time.Minute):
-			if err := doPost(); err != nil {
-				log.Errorf("发帖失败: %v", err)
-			}
-		}
-	}
 }
 
 // doComment 执行评论任务
@@ -626,4 +668,195 @@ func randomInterval(min, max int) int {
 		return min
 	}
 	return min + rand.Intn(max-min+1)
+}
+
+// ========== Web 管理界面 ==========
+
+// startWebServer 启动 Web 管理服务器
+func startWebServer() {
+	mux := http.NewServeMux()
+
+	// 页面
+	mux.HandleFunc("/", handleIndex)
+
+	// API
+	mux.HandleFunc("/api/status", handleStatus)
+	mux.HandleFunc("/api/config", handleConfig)
+	mux.HandleFunc("/api/toggle/comment", handleToggleComment)
+	mux.HandleFunc("/api/toggle/post", handleTogglePost)
+	mux.HandleFunc("/api/run/comment", handleRunComment)
+	mux.HandleFunc("/api/run/post", handleRunPost)
+
+	log.Infof("Web 管理界面启动在 http://localhost%s", webPort)
+	if err := http.ListenAndServe(webPort, mux); err != nil {
+		log.Errorf("Web 服务器错误: %v", err)
+	}
+}
+
+// handleIndex 主页
+func handleIndex(w http.ResponseWriter, r *http.Request) {
+	tmpl, err := template.ParseFS(templateFS, "templates/index.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	configMutex.RLock()
+	data := struct {
+		Config Config
+	}{
+		Config: config,
+	}
+	configMutex.RUnlock()
+
+	tmpl.Execute(w, data)
+}
+
+// handleStatus 获取状态
+func handleStatus(w http.ResponseWriter, r *http.Request) {
+	configMutex.RLock()
+	commentEnabled := config.Comment.Enabled
+	postEnabled := config.Post.Enabled
+	configMutex.RUnlock()
+
+	statusMutex.RLock()
+	status := map[string]interface{}{
+		"comment_enabled":   commentEnabled,
+		"post_enabled":      postEnabled,
+		"last_comment_time": lastCommentTime.Format(time.RFC3339),
+		"last_post_time":    lastPostTime.Format(time.RFC3339),
+		"comment_count":     commentCount,
+		"post_count":        postCount,
+		"login_status":      checkLoginStatus(),
+	}
+	statusMutex.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(status)
+}
+
+// handleConfig 获取/更新配置
+func handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		configMutex.RLock()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(config)
+		configMutex.RUnlock()
+		return
+	}
+
+	if r.Method == "POST" {
+		var newConfig Config
+		if err := json.NewDecoder(r.Body).Decode(&newConfig); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		configMutex.Lock()
+		config = newConfig
+		configMutex.Unlock()
+
+		// 保存到文件
+		if err := saveConfig(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]bool{"success": true})
+		return
+	}
+
+	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+}
+
+// saveConfig 保存配置到文件
+func saveConfig() error {
+	configMutex.RLock()
+	data, err := yaml.Marshal(config)
+	configMutex.RUnlock()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(configPath, data, 0644)
+}
+
+// handleToggleComment 切换评论开关
+func handleToggleComment(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	configMutex.Lock()
+	config.Comment.Enabled = !config.Comment.Enabled
+	enabled := config.Comment.Enabled
+	configMutex.Unlock()
+
+	saveConfig()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"enabled": enabled})
+}
+
+// handleTogglePost 切换发帖开关
+func handleTogglePost(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	configMutex.Lock()
+	config.Post.Enabled = !config.Post.Enabled
+	enabled := config.Post.Enabled
+	configMutex.Unlock()
+
+	saveConfig()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"enabled": enabled})
+}
+
+// handleRunComment 手动执行评论
+func handleRunComment(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	go func() {
+		if err := doComment(); err != nil {
+			log.Errorf("手动评论失败: %v", err)
+		} else {
+			statusMutex.Lock()
+			lastCommentTime = time.Now()
+			commentCount++
+			statusMutex.Unlock()
+		}
+	}()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"started": true})
+}
+
+// handleRunPost 手动执行发帖
+func handleRunPost(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	go func() {
+		if err := doPost(); err != nil {
+			log.Errorf("手动发帖失败: %v", err)
+		} else {
+			statusMutex.Lock()
+			lastPostTime = time.Now()
+			postCount++
+			statusMutex.Unlock()
+		}
+	}()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"started": true})
 }
