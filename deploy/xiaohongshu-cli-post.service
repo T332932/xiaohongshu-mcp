@@ -1,0 +1,15 @@
+[Unit]
+Description=Xiaohongshu AI CLI Post Task
+After=network.target xiaohongshu-mcp.service
+
+[Service]
+Type=oneshot
+User=xiaohongshu
+Group=xiaohongshu
+WorkingDirectory=/opt/xiaohongshu-mcp
+ExecStart=/opt/xiaohongshu-mcp/cli-scheduler.sh post
+Environment=AI_CLI=gemini
+# Environment=AI_CLI=claude
+
+[Install]
+WantedBy=multi-user.target

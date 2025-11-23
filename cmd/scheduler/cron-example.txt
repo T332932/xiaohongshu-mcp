@@ -1,0 +1,21 @@
+# 小红书 AI CLI 定时任务配置
+#
+# 安装方法: crontab -e 然后粘贴以下内容
+#
+# 环境变量设置（根据你使用的 CLI 修改）
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+AI_CLI=gemini
+# AI_CLI=claude
+
+# 工作目录
+WORKDIR=/opt/xiaohongshu-mcp
+
+# 评论任务 - 每小时执行一次（随机延迟0-30分钟）
+0 * * * * sleep $((RANDOM \% 1800)) && cd $WORKDIR && ./cli-scheduler.sh comment
+
+# 发帖任务 - 每4小时执行一次（随机延迟0-60分钟）
+0 */4 * * * sleep $((RANDOM \% 3600)) && cd $WORKDIR && ./cli-scheduler.sh post
+
+# 或者使用 systemd timer（推荐）
+# 参考 deploy/xiaohongshu-cli-scheduler.timer

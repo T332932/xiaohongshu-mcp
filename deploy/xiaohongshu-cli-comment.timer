@@ -1,0 +1,10 @@
+[Unit]
+Description=Xiaohongshu AI CLI Comment Timer
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=1800
+Persistent=true
+
+[Install]
+WantedBy=timers.target
