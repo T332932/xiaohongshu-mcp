@@ -89,18 +89,33 @@
                 </div>
 
                 <!-- AI 配置 -->
-                <div class="form-group">
-                    <label>AI API 地址</label>
-                    <input type="text" id="ai-url" value="{{.Config.AI.BaseURL}}">
-                </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label>AI API Key</label>
-                        <input type="password" id="ai-key" value="{{.Config.AI.APIKey}}">
+                        <label>AI 模式</label>
+                        <select id="ai-mode" onchange="toggleAIMode()">
+                            <option value="api" {{if eq .Config.AI.Mode "api"}}selected{{end}}>API 模式</option>
+                            <option value="cli" {{if eq .Config.AI.Mode "cli"}}selected{{end}}>CLI 模式 (Gemini/Claude)</option>
+                        </select>
                     </div>
+                    <div class="form-group" id="cli-command-group">
+                        <label>CLI 命令</label>
+                        <input type="text" id="ai-cli" value="{{.Config.AI.CLICommand}}" placeholder="gemini 或 claude">
+                    </div>
+                </div>
+                <div id="api-config">
                     <div class="form-group">
-                        <label>AI 模型</label>
-                        <input type="text" id="ai-model" value="{{.Config.AI.Model}}">
+                        <label>AI API 地址</label>
+                        <input type="text" id="ai-url" value="{{.Config.AI.BaseURL}}">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>AI API Key</label>
+                            <input type="password" id="ai-key" value="{{.Config.AI.APIKey}}">
+                        </div>
+                        <div class="form-group">
+                            <label>AI 模型</label>
+                            <input type="text" id="ai-model" value="{{.Config.AI.Model}}">
+                        </div>
                     </div>
                 </div>
 
@@ -219,6 +234,21 @@
                 .then(() => showMessage('发帖任务已启动', 'success'));
         }
 
+        // 切换 AI 模式显示
+        function toggleAIMode() {
+            const mode = document.getElementById('ai-mode').value;
+            const apiConfig = document.getElementById('api-config');
+            const cliGroup = document.getElementById('cli-command-group');
+
+            if (mode === 'cli') {
+                apiConfig.style.display = 'none';
+                cliGroup.style.display = 'block';
+            } else {
+                apiConfig.style.display = 'block';
+                cliGroup.style.display = 'none';
+            }
+        }
+
         // 保存配置
         document.getElementById('config-form').onsubmit = function(e) {
             e.preventDefault();
@@ -228,9 +258,11 @@
                     base_url: document.getElementById('mcp-url').value
                 },
                 ai: {
+                    mode: document.getElementById('ai-mode').value,
                     base_url: document.getElementById('ai-url').value,
                     api_key: document.getElementById('ai-key').value,
-                    model: document.getElementById('ai-model').value
+                    model: document.getElementById('ai-model').value,
+                    cli_command: document.getElementById('ai-cli').value
                 },
                 comment: {
                     enabled: document.getElementById('comment-status').textContent === '开启',
@@ -268,6 +300,7 @@
         // 初始化
         fetchStatus();
         setInterval(fetchStatus, 5000);
+        toggleAIMode(); // 初始化 AI 模式显示
     </script>
 </body>
 </html>

@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"sync"
@@ -30,9 +31,12 @@ type Config struct {
 		BaseURL string `yaml:"base_url" json:"base_url"` // MCP 服务地址
 	} `yaml:"mcp" json:"mcp"`
 	AI struct {
+		Mode    string `yaml:"mode" json:"mode"`         // 模式: "api" 或 "cli"
 		BaseURL string `yaml:"base_url" json:"base_url"` // AI API 地址 (OpenAI 兼容)
 		APIKey  string `yaml:"api_key" json:"api_key"`   // API 密钥
 		Model   string `yaml:"model" json:"model"`       // 模型名称
+		// CLI 模式配置
+		CLICommand string `yaml:"cli_command" json:"cli_command"` // CLI 命令: gemini, claude 等
 	} `yaml:"ai" json:"ai"`
 	Comment struct {
 		Enabled        bool     `yaml:"enabled" json:"enabled"`                 // 是否启用评论
@@ -543,6 +547,17 @@ func getFeedDetail(feedID, xsecToken string) (*FeedDetail, error) {
 
 // generateAIContent 调用 AI 生成内容
 func generateAIContent(prompt string) (string, error) {
+	configMutex.RLock()
+	mode := config.AI.Mode
+	cliCommand := config.AI.CLICommand
+	configMutex.RUnlock()
+
+	// CLI 模式
+	if mode == "cli" {
+		return generateAIContentCLI(cliCommand, prompt)
+	}
+
+	// API 模式 (默认)
 	req := AIRequest{
 		Model: config.AI.Model,
 		Messages: []AIMessage{
@@ -574,6 +589,35 @@ func generateAIContent(prompt string) (string, error) {
 		return "", fmt.Errorf("AI 没有返回内容")
 	}
 	return strings.TrimSpace(result.Choices[0].Message.Content), nil
+}
+
+// generateAIContentCLI 通过 CLI 命令生成内容
+func generateAIContentCLI(cliCommand, prompt string) (string, error) {
+	if cliCommand == "" {
+		cliCommand = "gemini" // 默认使用 gemini
+	}
+
+	log.Debugf("执行 CLI 命令: %s", cliCommand)
+
+	// 创建命令，通过 stdin 传入 prompt
+	cmd := exec.Command(cliCommand)
+	cmd.Stdin = strings.NewReader(prompt)
+
+	// 执行并获取输出
+	output, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return "", fmt.Errorf("CLI 执行失败: %s, stderr: %s", err, string(exitErr.Stderr))
+		}
+		return "", fmt.Errorf("CLI 执行失败: %w", err)
+	}
+
+	result := strings.TrimSpace(string(output))
+	if result == "" {
+		return "", fmt.Errorf("CLI 没有返回内容")
+	}
+
+	return result, nil
 }
 
 // postComment 发表评论
