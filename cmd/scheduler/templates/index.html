@@ -72,6 +72,7 @@
         <!-- 快捷操作 -->
         <div class="card">
             <h2>快捷操作</h2>
+            <button class="btn btn-primary" onclick="checkLogin()">检查登录状态</button>
             <button class="btn btn-primary" onclick="toggleComment()">切换评论开关</button>
             <button class="btn btn-primary" onclick="togglePost()">切换发帖开关</button>
             <button class="btn btn-success" onclick="runComment()">立即评论</button>
@@ -82,11 +83,24 @@
         <div class="card">
             <h2>Cookie 管理</h2>
             <div class="form-group">
-                <label>上传 cookies.json 文件</label>
+                <label>方式一：上传 cookies.json 文件</label>
                 <input type="file" id="cookie-file" accept=".json" style="margin-bottom: 10px;">
+                <button class="btn btn-primary" onclick="uploadCookies()">上传文件</button>
             </div>
-            <button class="btn btn-primary" onclick="uploadCookies()">上传 Cookies</button>
+            <div class="form-group">
+                <label>方式二：直接粘贴 Cookie 字符串</label>
+                <textarea id="cookie-text" placeholder="粘贴浏览器中复制的 cookie 字符串，格式如：web_session=xxx; a1=xxx; webId=xxx" style="min-height: 60px;"></textarea>
+                <button class="btn btn-primary" onclick="saveCookieText()" style="margin-top: 5px;">保存 Cookie</button>
+            </div>
             <span id="cookie-status" style="margin-left: 10px; color: #666;"></span>
+            <div style="margin-top: 10px; padding: 10px; background: #f9f9f9; border-radius: 4px; font-size: 12px; color: #666;">
+                <strong>获取 Cookie 方法：</strong><br>
+                1. 浏览器登录小红书<br>
+                2. 按 F12 打开开发者工具<br>
+                3. 切换到 Network 标签<br>
+                4. 刷新页面，找到任意请求<br>
+                5. 复制请求头中的 Cookie 字段值
+            </div>
         </div>
 
         <!-- 配置表单 -->
@@ -245,6 +259,65 @@
                 .then(() => showMessage('发帖任务已启动', 'success'));
         }
 
+        // 检查登录状态
+        function checkLogin() {
+            const statusEl = document.getElementById('login-status');
+            statusEl.textContent = '检查中...';
+            statusEl.className = 'status-value';
+
+            fetch('/api/check-login', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    statusEl.textContent = data.logged_in ? '已登录' : '未登录';
+                    statusEl.className = 'status-value ' + (data.logged_in ? 'on' : 'off');
+                    showMessage(data.message, data.logged_in ? 'success' : 'error');
+                })
+                .catch(err => {
+                    statusEl.textContent = '检查失败';
+                    statusEl.className = 'status-value off';
+                    showMessage('检查登录状态失败: ' + err.message, 'error');
+                });
+        }
+
+        // 保存粘贴的 Cookie 文本
+        function saveCookieText() {
+            const textarea = document.getElementById('cookie-text');
+            const statusSpan = document.getElementById('cookie-status');
+            const cookieText = textarea.value.trim();
+
+            if (!cookieText) {
+                showMessage('请粘贴 Cookie 字符串', 'error');
+                return;
+            }
+
+            statusSpan.textContent = '保存中...';
+
+            fetch('/api/save/cookie-text', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cookie_text: cookieText })
+            })
+            .then(r => {
+                if (!r.ok) {
+                    return r.text().then(text => { throw new Error(text); });
+                }
+                return r.json();
+            })
+            .then(data => {
+                showMessage('Cookie 保存成功，正在验证登录状态...', 'success');
+                statusSpan.textContent = '已保存到 ' + data.path;
+                textarea.value = '';
+                // 等待 1 秒后自动检查登录状态
+                setTimeout(() => {
+                    checkLogin();
+                }, 1000);
+            })
+            .catch(err => {
+                showMessage('保存失败: ' + err.message, 'error');
+                statusSpan.textContent = '';
+            });
+        }
+
         // 上传 Cookies
         function uploadCookies() {
             const fileInput = document.getElementById('cookie-file');
@@ -271,10 +344,13 @@
                 return r.json();
             })
             .then(data => {
-                showMessage('Cookies 上传成功', 'success');
+                showMessage('Cookies 上传成功，正在验证登录状态...', 'success');
                 statusSpan.textContent = '已保存到 ' + data.path;
                 fileInput.value = '';
-                fetchStatus();
+                // 等待 1 秒后自动检查登录状态
+                setTimeout(() => {
+                    checkLogin();
+                }, 1000);
             })
             .catch(err => {
                 showMessage('上传失败: ' + err.message, 'error');

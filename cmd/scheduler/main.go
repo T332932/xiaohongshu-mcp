@@ -731,6 +731,8 @@ func startWebServer() {
 	mux.HandleFunc("/api/toggle/post", handleTogglePost)
 	mux.HandleFunc("/api/run/comment", handleRunComment)
 	mux.HandleFunc("/api/run/post", handleRunPost)
+	mux.HandleFunc("/api/check-login", handleCheckLogin)
+	mux.HandleFunc("/api/save/cookie-text", handleSaveCookieText)
 
 	log.Infof("Web 管理界面启动在 http://localhost%s", webPort)
 	if err := http.ListenAndServe(webPort, mux); err != nil {
@@ -955,4 +957,114 @@ func handleRunPost(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"started": true})
+}
+
+// handleCheckLogin 检查登录状态
+func handleCheckLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" && r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	loggedIn := checkLoginStatus()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"logged_in": loggedIn,
+		"message": func() string {
+			if loggedIn {
+				return "登录成功"
+			}
+			return "未登录，请检查 Cookie 格式是否正确"
+		}(),
+	})
+}
+
+// handleSaveCookieText 保存粘贴的 Cookie 文本
+func handleSaveCookieText(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		CookieText string `json:"cookie_text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "解析请求失败: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.CookieText == "" {
+		http.Error(w, "Cookie 文本不能为空", http.StatusBadRequest)
+		return
+	}
+
+	// 解析 cookie 字符串并转换为 JSON 数组
+	cookies := parseCookieString(req.CookieText)
+	if len(cookies) == 0 {
+		http.Error(w, "无法解析 Cookie 字符串", http.StatusBadRequest)
+		return
+	}
+
+	// 转换为 JSON
+	data, err := json.MarshalIndent(cookies, "", "  ")
+	if err != nil {
+		http.Error(w, "转换 JSON 失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 保存到文件
+	cookiePath := "/tmp/cookies.json"
+	if err := os.WriteFile(cookiePath, data, 0644); err != nil {
+		http.Error(w, "保存文件失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	log.Infof("Cookie 文本已解析并保存到 %s (共 %d 个)", cookiePath, len(cookies))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"path":    cookiePath,
+		"count":   len(cookies),
+	})
+}
+
+// parseCookieString 解析 cookie 字符串为 JSON 数组
+func parseCookieString(cookieStr string) []map[string]interface{} {
+	var cookies []map[string]interface{}
+
+	// 按 ; 分割
+	pairs := strings.Split(cookieStr, ";")
+	for _, pair := range pairs {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+
+		// 按 = 分割 name 和 value
+		idx := strings.Index(pair, "=")
+		if idx == -1 {
+			continue
+		}
+
+		name := strings.TrimSpace(pair[:idx])
+		value := strings.TrimSpace(pair[idx+1:])
+
+		if name == "" {
+			continue
+		}
+
+		// 创建 cookie 对象 (Rod 浏览器格式)
+		cookie := map[string]interface{}{
+			"name":   name,
+			"value":  value,
+			"domain": ".xiaohongshu.com",
+			"path":   "/",
+		}
+		cookies = append(cookies, cookie)
+	}
+
+	return cookies
 }
