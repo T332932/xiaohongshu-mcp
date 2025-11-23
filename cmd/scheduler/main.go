@@ -29,11 +29,12 @@ type Config struct {
 		Model   string `yaml:"model"`    // 模型名称
 	} `yaml:"ai"`
 	Comment struct {
-		Enabled       bool     `yaml:"enabled"`        // 是否启用评论
-		IntervalMin   int      `yaml:"interval_min"`   // 最小间隔(分钟)
-		IntervalMax   int      `yaml:"interval_max"`   // 最大间隔(分钟)
-		SearchKeyword string   `yaml:"search_keyword"` // 搜索关键词
-		Prompts       []string `yaml:"prompts"`        // AI 评论提示词列表
+		Enabled        bool     `yaml:"enabled"`         // 是否启用评论
+		IntervalMin    int      `yaml:"interval_min"`    // 最小间隔(分钟)
+		IntervalMax    int      `yaml:"interval_max"`    // 最大间隔(分钟)
+		SearchKeywords []string `yaml:"search_keywords"` // 搜索关键词列表
+		MaxComments    int      `yaml:"max_comments"`    // 每次最多评论数
+		SystemPrompt   string   `yaml:"system_prompt"`   // AI 系统提示词
 	} `yaml:"comment"`
 	Post struct {
 		Enabled     bool     `yaml:"enabled"`      // 是否启用发帖
@@ -83,6 +84,23 @@ type FeedDetail struct {
 		Description string `json:"description"`
 		Type        string `json:"type"`
 	} `json:"data"`
+}
+
+// CommentDecision AI 评论决策
+type CommentDecision struct {
+	Comments []struct {
+		Index   int    `json:"index"`   // 帖子索引
+		Comment string `json:"comment"` // 评论内容
+	} `json:"comments"`
+}
+
+// PostInfo 帖子信息（用于 AI 选择）
+type PostInfo struct {
+	Index       int
+	FeedID      string
+	XsecToken   string
+	Title       string
+	Description string
 }
 
 var (
@@ -209,46 +227,115 @@ func postScheduler(stopCh <-chan struct{}) {
 func doComment() error {
 	log.Info("开始执行评论任务")
 
-	// 搜索帖子
-	feeds, err := searchFeeds(config.Comment.SearchKeyword)
-	if err != nil {
-		return fmt.Errorf("搜索帖子失败: %w", err)
-	}
-	if len(feeds) == 0 {
-		return fmt.Errorf("没有找到帖子")
+	// 搜索多个关键词的帖子
+	var allPosts []PostInfo
+	for _, keyword := range config.Comment.SearchKeywords {
+		feeds, err := searchFeeds(keyword)
+		if err != nil {
+			log.Warnf("搜索关键词 %s 失败: %v", keyword, err)
+			continue
+		}
+		for _, f := range feeds {
+			// 获取帖子详情
+			detail, err := getFeedDetail(f.FeedID, f.XsecToken)
+			desc := ""
+			title := f.Title
+			if err == nil {
+				desc = detail.Data.Description
+				title = detail.Data.Title
+			}
+			allPosts = append(allPosts, PostInfo{
+				Index:       len(allPosts),
+				FeedID:      f.FeedID,
+				XsecToken:   f.XsecToken,
+				Title:       title,
+				Description: desc,
+			})
+		}
 	}
 
-	// 随机选择一个帖子
-	feed := feeds[rand.Intn(len(feeds))]
-	log.Infof("选择帖子: %s", feed.Title)
+	if len(allPosts) == 0 {
+		return fmt.Errorf("没有找到任何帖子")
+	}
+	log.Infof("共找到 %d 个帖子", len(allPosts))
 
-	// 获取帖子详情
-	detail, err := getFeedDetail(feed.FeedID, feed.XsecToken)
-	if err != nil {
-		log.Warnf("获取帖子详情失败，使用标题生成评论: %v", err)
-		detail = &FeedDetail{}
-		detail.Data.Title = feed.Title
+	// 构建帖子列表给 AI
+	var postList strings.Builder
+	for _, p := range allPosts {
+		postList.WriteString(fmt.Sprintf("\n[%d] 标题: %s\n", p.Index, p.Title))
+		if p.Description != "" {
+			// 截断过长的内容
+			desc := p.Description
+			if len([]rune(desc)) > 200 {
+				desc = string([]rune(desc)[:200]) + "..."
+			}
+			postList.WriteString(fmt.Sprintf("内容: %s\n", desc))
+		}
 	}
 
-	// 生成评论内容 - 包含完整帖子信息
-	prompt := config.Comment.Prompts[rand.Intn(len(config.Comment.Prompts))]
-	var commentPrompt string
-	if detail.Data.Description != "" {
-		commentPrompt = fmt.Sprintf("%s\n\n帖子标题: %s\n帖子内容: %s", prompt, detail.Data.Title, detail.Data.Description)
-	} else {
-		commentPrompt = fmt.Sprintf("%s\n\n帖子标题: %s", prompt, detail.Data.Title)
+	// 让 AI 选择并生成评论
+	maxComments := config.Comment.MaxComments
+	if maxComments <= 0 {
+		maxComments = 3
 	}
-	comment, err := generateAIContent(commentPrompt)
+
+	prompt := fmt.Sprintf(`%s
+
+以下是可选的帖子列表:
+%s
+
+请选择最值得评论的帖子(最多%d个)，为每个生成一条评论。
+评论要求：真诚自然，不超过50字，不要使用表情符号。
+
+请严格按以下 JSON 格式返回：
+{"comments":[{"index":0,"comment":"评论内容"},{"index":2,"comment":"评论内容"}]}
+
+只返回 JSON，不要其他内容。`, config.Comment.SystemPrompt, postList.String(), maxComments)
+
+	response, err := generateAIContent(prompt)
 	if err != nil {
-		return fmt.Errorf("生成评论失败: %w", err)
+		return fmt.Errorf("AI 生成评论失败: %w", err)
 	}
-	log.Infof("生成评论: %s", comment)
+
+	// 解析 AI 返回的 JSON
+	// 清理可能的 markdown 代码块
+	response = strings.TrimSpace(response)
+	response = strings.TrimPrefix(response, "```json")
+	response = strings.TrimPrefix(response, "```")
+	response = strings.TrimSuffix(response, "```")
+	response = strings.TrimSpace(response)
+
+	var decision CommentDecision
+	if err := json.Unmarshal([]byte(response), &decision); err != nil {
+		return fmt.Errorf("解析 AI 响应失败: %w, 响应: %s", err, response)
+	}
+
+	if len(decision.Comments) == 0 {
+		log.Info("AI 没有选择任何帖子评论")
+		return nil
+	}
 
 	// 发表评论
-	if err := postComment(feed.FeedID, feed.XsecToken, comment); err != nil {
-		return fmt.Errorf("发表评论失败: %w", err)
+	successCount := 0
+	for _, c := range decision.Comments {
+		if c.Index < 0 || c.Index >= len(allPosts) {
+			log.Warnf("无效的帖子索引: %d", c.Index)
+			continue
+		}
+		post := allPosts[c.Index]
+		log.Infof("评论帖子 [%s]: %s", post.Title, c.Comment)
+
+		if err := postComment(post.FeedID, post.XsecToken, c.Comment); err != nil {
+			log.Errorf("发表评论失败: %v", err)
+			continue
+		}
+		successCount++
+
+		// 评论间隔，避免太快
+		time.Sleep(time.Duration(5+rand.Intn(10)) * time.Second)
 	}
-	log.Info("评论发表成功")
+
+	log.Infof("成功发表 %d 条评论", successCount)
 	return nil
 }
 
