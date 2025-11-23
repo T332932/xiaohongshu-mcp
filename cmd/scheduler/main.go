@@ -309,7 +309,11 @@ func doComment() error {
 	}
 
 	if len(allPosts) == 0 {
-		return fmt.Errorf("没有找到新帖子(跳过了 %d 个已评论帖子)", skippedCount)
+		if skippedCount > 0 {
+			log.Infof("所有帖子都已评论过(共 %d 个)，本轮跳过", skippedCount)
+			return nil // 不是错误，正常跳过
+		}
+		return fmt.Errorf("没有找到任何帖子")
 	}
 	log.Infof("共找到 %d 个新帖子(跳过 %d 个已评论)", len(allPosts), skippedCount)
 
