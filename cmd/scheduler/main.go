@@ -726,6 +726,7 @@ func startWebServer() {
 	// API
 	mux.HandleFunc("/api/status", handleStatus)
 	mux.HandleFunc("/api/config", handleConfig)
+	mux.HandleFunc("/api/upload/cookies", handleUploadCookies)
 	mux.HandleFunc("/api/toggle/comment", handleToggleComment)
 	mux.HandleFunc("/api/toggle/post", handleTogglePost)
 	mux.HandleFunc("/api/run/comment", handleRunComment)
@@ -823,6 +824,57 @@ func saveConfig() error {
 		return err
 	}
 	return os.WriteFile(configPath, data, 0644)
+}
+
+// handleUploadCookies 上传 cookies
+func handleUploadCookies(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 解析 multipart form
+	err := r.ParseMultipartForm(10 << 20) // 10MB max
+	if err != nil {
+		http.Error(w, "解析表单失败: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	file, _, err := r.FormFile("cookies")
+	if err != nil {
+		http.Error(w, "获取文件失败: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	// 读取内容
+	content, err := io.ReadAll(file)
+	if err != nil {
+		http.Error(w, "读取文件失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 验证 JSON 格式
+	var cookies interface{}
+	if err := json.Unmarshal(content, &cookies); err != nil {
+		http.Error(w, "无效的 JSON 格式: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// 保存到 /tmp/cookies.json
+	cookiePath := "/tmp/cookies.json"
+	if err := os.WriteFile(cookiePath, content, 0644); err != nil {
+		http.Error(w, "保存文件失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	log.Infof("Cookies 已上传到 %s", cookiePath)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"path":    cookiePath,
+	})
 }
 
 // handleToggleComment 切换评论开关

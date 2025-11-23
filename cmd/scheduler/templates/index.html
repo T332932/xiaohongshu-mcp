@@ -78,6 +78,17 @@
             <button class="btn btn-warning" onclick="runPost()">立即发帖</button>
         </div>
 
+        <!-- Cookie 上传 -->
+        <div class="card">
+            <h2>Cookie 管理</h2>
+            <div class="form-group">
+                <label>上传 cookies.json 文件</label>
+                <input type="file" id="cookie-file" accept=".json" style="margin-bottom: 10px;">
+            </div>
+            <button class="btn btn-primary" onclick="uploadCookies()">上传 Cookies</button>
+            <span id="cookie-status" style="margin-left: 10px; color: #666;"></span>
+        </div>
+
         <!-- 配置表单 -->
         <div class="card">
             <h2>配置设置</h2>
@@ -232,6 +243,43 @@
             fetch('/api/run/post', { method: 'POST' })
                 .then(r => r.json())
                 .then(() => showMessage('发帖任务已启动', 'success'));
+        }
+
+        // 上传 Cookies
+        function uploadCookies() {
+            const fileInput = document.getElementById('cookie-file');
+            const statusSpan = document.getElementById('cookie-status');
+
+            if (!fileInput.files.length) {
+                showMessage('请选择 cookies.json 文件', 'error');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('cookies', fileInput.files[0]);
+
+            statusSpan.textContent = '上传中...';
+
+            fetch('/api/upload/cookies', {
+                method: 'POST',
+                body: formData
+            })
+            .then(r => {
+                if (!r.ok) {
+                    return r.text().then(text => { throw new Error(text); });
+                }
+                return r.json();
+            })
+            .then(data => {
+                showMessage('Cookies 上传成功', 'success');
+                statusSpan.textContent = '已保存到 ' + data.path;
+                fileInput.value = '';
+                fetchStatus();
+            })
+            .catch(err => {
+                showMessage('上传失败: ' + err.message, 'error');
+                statusSpan.textContent = '';
+            });
         }
 
         // 切换 AI 模式显示
