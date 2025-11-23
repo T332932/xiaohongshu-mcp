@@ -597,7 +597,7 @@ func postComment(feedID, xsecToken, content string) error {
 		return err
 	}
 	if !result.Success {
-		return fmt.Errorf(result.Error)
+		return fmt.Errorf("评论失败: %s", result.Error)
 	}
 	return nil
 }
@@ -623,7 +623,7 @@ func publishContent(title, content string, images []string) error {
 		return err
 	}
 	if !result.Success {
-		return fmt.Errorf(result.Error)
+		return fmt.Errorf("发布失败: %s", result.Error)
 	}
 	return nil
 }
