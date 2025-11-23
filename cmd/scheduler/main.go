@@ -75,6 +75,16 @@ type SearchResult struct {
 	} `json:"data"`
 }
 
+// FeedDetail 帖子详情
+type FeedDetail struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Type        string `json:"type"`
+	} `json:"data"`
+}
+
 var (
 	configPath string
 	config     Config
@@ -212,9 +222,22 @@ func doComment() error {
 	feed := feeds[rand.Intn(len(feeds))]
 	log.Infof("选择帖子: %s", feed.Title)
 
-	// 生成评论内容
+	// 获取帖子详情
+	detail, err := getFeedDetail(feed.FeedID, feed.XsecToken)
+	if err != nil {
+		log.Warnf("获取帖子详情失败，使用标题生成评论: %v", err)
+		detail = &FeedDetail{}
+		detail.Data.Title = feed.Title
+	}
+
+	// 生成评论内容 - 包含完整帖子信息
 	prompt := config.Comment.Prompts[rand.Intn(len(config.Comment.Prompts))]
-	commentPrompt := fmt.Sprintf("%s\n\n帖子标题: %s", prompt, feed.Title)
+	var commentPrompt string
+	if detail.Data.Description != "" {
+		commentPrompt = fmt.Sprintf("%s\n\n帖子标题: %s\n帖子内容: %s", prompt, detail.Data.Title, detail.Data.Description)
+	} else {
+		commentPrompt = fmt.Sprintf("%s\n\n帖子标题: %s", prompt, detail.Data.Title)
+	}
 	comment, err := generateAIContent(commentPrompt)
 	if err != nil {
 		return fmt.Errorf("生成评论失败: %w", err)
@@ -306,6 +329,28 @@ func searchFeeds(keyword string) ([]struct {
 		}{f.FeedID, f.XsecToken, f.Title})
 	}
 	return feeds, nil
+}
+
+// getFeedDetail 获取帖子详情
+func getFeedDetail(feedID, xsecToken string) (*FeedDetail, error) {
+	reqBody, _ := json.Marshal(map[string]string{
+		"feed_id":    feedID,
+		"xsec_token": xsecToken,
+	})
+	resp, err := http.Post(config.MCP.BaseURL+"/api/v1/feeds/detail", "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result FeedDetail
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	if !result.Success {
+		return nil, fmt.Errorf("获取帖子详情失败")
+	}
+	return &result, nil
 }
 
 // generateAIContent 调用 AI 生成内容
