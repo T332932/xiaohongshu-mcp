@@ -1,0 +1,24 @@
+[Unit]
+Description=Xiaohongshu MCP Server
+After=network.target
+
+[Service]
+Type=simple
+User=xiaohongshu
+Group=xiaohongshu
+WorkingDirectory=/opt/xiaohongshu-mcp
+ExecStart=/opt/xiaohongshu-mcp/bin/xiaohongshu-mcp -headless=true
+Restart=on-failure
+RestartSec=5
+
+# 环境变量
+Environment=COOKIES_PATH=/opt/xiaohongshu-mcp/data/cookies.json
+
+# 安全设置
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/xiaohongshu-mcp/data /tmp
+
+[Install]
+WantedBy=multi-user.target

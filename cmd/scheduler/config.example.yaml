@@ -1,0 +1,34 @@
+# AI 自动发布调度器配置
+
+# MCP 服务配置
+mcp:
+  base_url: "http://localhost:18060"  # MCP 服务地址
+
+# AI API 配置 (OpenAI 兼容接口)
+ai:
+  base_url: "https://api.openai.com/v1"  # 或使用其他兼容接口
+  api_key: "${OPENAI_API_KEY}"           # 支持环境变量
+  model: "gpt-4o-mini"                   # 模型名称
+
+# 评论调度配置
+comment:
+  enabled: true              # 是否启用自动评论
+  interval_min: 30           # 最小间隔(分钟)
+  interval_max: 60           # 最大间隔(分钟)
+  search_keyword: "美食"     # 搜索关键词，找帖子来评论
+  prompts:                   # AI 评论提示词列表，随机选择
+    - "为这篇帖子写一个友好、有趣的评论，不超过50字，要真诚自然"
+    - "根据帖子标题，写一个表示赞同或分享类似经历的评论，不超过50字"
+    - "为这篇帖子写一个提问式的评论，表达好奇心，不超过50字"
+
+# 发帖调度配置
+post:
+  enabled: true              # 是否启用自动发帖
+  interval_min: 120          # 最小间隔(分钟)
+  interval_max: 240          # 最大间隔(分钟)
+  image_dir: "./images"      # 图片目录，发帖时随机选择
+  topics:                    # 发帖主题列表，随机选择
+    - "今日美食分享"
+    - "生活小技巧"
+    - "好物推荐"
+    - "日常碎碎念"

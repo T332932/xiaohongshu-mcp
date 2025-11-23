@@ -1,0 +1,19 @@
+[Unit]
+Description=Xiaohongshu AI Auto-Posting Scheduler
+After=network.target xiaohongshu-mcp.service
+Requires=xiaohongshu-mcp.service
+
+[Service]
+Type=simple
+User=xiaohongshu
+Group=xiaohongshu
+WorkingDirectory=/opt/xiaohongshu-mcp
+ExecStart=/opt/xiaohongshu-mcp/bin/xiaohongshu-scheduler -config=/opt/xiaohongshu-mcp/scheduler-config.yaml
+Restart=on-failure
+RestartSec=10
+
+# 环境变量 (根据需要设置)
+# Environment=OPENAI_API_KEY=your-api-key-here
+
+[Install]
+WantedBy=multi-user.target
