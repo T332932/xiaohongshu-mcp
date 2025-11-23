@@ -104,13 +104,58 @@ type PostInfo struct {
 }
 
 var (
-	configPath string
-	config     Config
-	log        = logrus.New()
+	configPath      string
+	config          Config
+	log             = logrus.New()
+	commentHistory  = make(map[string]time.Time) // 已评论的帖子ID -> 评论时间
+	historyFilePath = "comment_history.json"
 )
 
 func init() {
 	flag.StringVar(&configPath, "config", "config.yaml", "配置文件路径")
+}
+
+// loadCommentHistory 加载评论历史
+func loadCommentHistory() {
+	data, err := os.ReadFile(historyFilePath)
+	if err != nil {
+		return // 文件不存在则跳过
+	}
+	var history map[string]string
+	if err := json.Unmarshal(data, &history); err != nil {
+		return
+	}
+	for k, v := range history {
+		t, _ := time.Parse(time.RFC3339, v)
+		commentHistory[k] = t
+	}
+	log.Infof("加载了 %d 条评论历史", len(commentHistory))
+}
+
+// saveCommentHistory 保存评论历史
+func saveCommentHistory() {
+	history := make(map[string]string)
+	// 只保留最近7天的记录
+	cutoff := time.Now().AddDate(0, 0, -7)
+	for k, v := range commentHistory {
+		if v.After(cutoff) {
+			history[k] = v.Format(time.RFC3339)
+		}
+	}
+	data, _ := json.MarshalIndent(history, "", "  ")
+	os.WriteFile(historyFilePath, data, 0644)
+}
+
+// isCommented 检查是否已评论
+func isCommented(feedID string) bool {
+	_, exists := commentHistory[feedID]
+	return exists
+}
+
+// markCommented 标记已评论
+func markCommented(feedID string) {
+	commentHistory[feedID] = time.Now()
+	saveCommentHistory()
 }
 
 func main() {
@@ -125,6 +170,9 @@ func main() {
 	if err := loadConfig(); err != nil {
 		log.Fatalf("加载配置失败: %v", err)
 	}
+
+	// 加载评论历史
+	loadCommentHistory()
 
 	log.Info("AI 自动发布调度器启动")
 
@@ -229,6 +277,7 @@ func doComment() error {
 
 	// 搜索多个关键词的帖子
 	var allPosts []PostInfo
+	skippedCount := 0
 	for _, keyword := range config.Comment.SearchKeywords {
 		feeds, err := searchFeeds(keyword)
 		if err != nil {
@@ -236,6 +285,11 @@ func doComment() error {
 			continue
 		}
 		for _, f := range feeds {
+			// 跳过已评论的帖子
+			if isCommented(f.FeedID) {
+				skippedCount++
+				continue
+			}
 			// 获取帖子详情
 			detail, err := getFeedDetail(f.FeedID, f.XsecToken)
 			desc := ""
@@ -255,9 +309,9 @@ func doComment() error {
 	}
 
 	if len(allPosts) == 0 {
-		return fmt.Errorf("没有找到任何帖子")
+		return fmt.Errorf("没有找到新帖子(跳过了 %d 个已评论帖子)", skippedCount)
 	}
-	log.Infof("共找到 %d 个帖子", len(allPosts))
+	log.Infof("共找到 %d 个新帖子(跳过 %d 个已评论)", len(allPosts), skippedCount)
 
 	// 构建帖子列表给 AI
 	var postList strings.Builder
@@ -330,6 +384,7 @@ func doComment() error {
 			continue
 		}
 		successCount++
+		markCommented(post.FeedID) // 标记已评论
 
 		// 评论间隔，避免太快
 		time.Sleep(time.Duration(5+rand.Intn(10)) * time.Second)
