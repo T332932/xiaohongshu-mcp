@@ -36,7 +36,8 @@ type Config struct {
 		APIKey  string `yaml:"api_key" json:"api_key"`   // API 密钥
 		Model   string `yaml:"model" json:"model"`       // 模型名称
 		// CLI 模式配置
-		CLICommand string `yaml:"cli_command" json:"cli_command"` // CLI 命令: gemini, claude 等
+		CLICommand string            `yaml:"cli_command" json:"cli_command"` // CLI 命令: gemini, claude 等
+		CLIEnv     map[string]string `yaml:"cli_env" json:"cli_env"`         // CLI 环境变量 (API keys 等)
 	} `yaml:"ai" json:"ai"`
 	Comment struct {
 		Enabled        bool     `yaml:"enabled" json:"enabled"`                 // 是否启用评论
@@ -602,6 +603,19 @@ func generateAIContentCLI(cliCommand, prompt string) (string, error) {
 	// 创建命令，通过 stdin 传入 prompt
 	cmd := exec.Command(cliCommand)
 	cmd.Stdin = strings.NewReader(prompt)
+
+	// 设置环境变量
+	configMutex.RLock()
+	cliEnv := config.AI.CLIEnv
+	configMutex.RUnlock()
+
+	if len(cliEnv) > 0 {
+		// 继承当前环境并添加 CLI 环境变量
+		cmd.Env = os.Environ()
+		for k, v := range cliEnv {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
+		}
+	}
 
 	// 执行并获取输出
 	output, err := cmd.Output()

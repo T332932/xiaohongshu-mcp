@@ -124,7 +124,27 @@
                     </div>
                     <div class="form-group" id="cli-command-group">
                         <label>CLI 命令</label>
-                        <input type="text" id="ai-cli" value="{{.Config.AI.CLICommand}}" placeholder="gemini 或 claude">
+                        <select id="ai-cli" onchange="updateCLIPreset()">
+                            <option value="gemini" {{if eq .Config.AI.CLICommand "gemini"}}selected{{end}}>Gemini CLI</option>
+                            <option value="claude" {{if eq .Config.AI.CLICommand "claude"}}selected{{end}}>Claude Code</option>
+                            <option value="custom" {{if and (ne .Config.AI.CLICommand "gemini") (ne .Config.AI.CLICommand "claude") (ne .Config.AI.CLICommand "")}}selected{{end}}>自定义</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="cli-config">
+                    <div class="form-group" id="cli-custom-command-group" style="display:none;">
+                        <label>自定义 CLI 命令</label>
+                        <input type="text" id="ai-cli-custom" value="{{if and (ne .Config.AI.CLICommand "gemini") (ne .Config.AI.CLICommand "claude")}}{{.Config.AI.CLICommand}}{{end}}" placeholder="输入自定义命令">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Google API Key (Gemini)</label>
+                            <input type="password" id="cli-google-key" value="{{index .Config.AI.CLIEnv "GOOGLE_API_KEY"}}" placeholder="用于 Gemini CLI">
+                        </div>
+                        <div class="form-group">
+                            <label>Anthropic API Key (Claude)</label>
+                            <input type="password" id="cli-anthropic-key" value="{{index .Config.AI.CLIEnv "ANTHROPIC_API_KEY"}}" placeholder="用于 Claude Code">
+                        </div>
                     </div>
                 </div>
                 <div id="api-config">
@@ -363,19 +383,53 @@
             const mode = document.getElementById('ai-mode').value;
             const apiConfig = document.getElementById('api-config');
             const cliGroup = document.getElementById('cli-command-group');
+            const cliConfig = document.getElementById('cli-config');
 
             if (mode === 'cli') {
                 apiConfig.style.display = 'none';
                 cliGroup.style.display = 'block';
+                cliConfig.style.display = 'block';
+                updateCLIPreset();
             } else {
                 apiConfig.style.display = 'block';
                 cliGroup.style.display = 'none';
+                cliConfig.style.display = 'none';
+            }
+        }
+
+        // 更新 CLI 预设显示
+        function updateCLIPreset() {
+            const preset = document.getElementById('ai-cli').value;
+            const customGroup = document.getElementById('cli-custom-command-group');
+
+            if (preset === 'custom') {
+                customGroup.style.display = 'block';
+            } else {
+                customGroup.style.display = 'none';
             }
         }
 
         // 保存配置
         document.getElementById('config-form').onsubmit = function(e) {
             e.preventDefault();
+
+            // 获取 CLI 命令
+            let cliCommand = document.getElementById('ai-cli').value;
+            if (cliCommand === 'custom') {
+                cliCommand = document.getElementById('ai-cli-custom').value;
+            }
+
+            // 构建 CLI 环境变量
+            const cliEnv = {};
+            const googleKey = document.getElementById('cli-google-key').value;
+            const anthropicKey = document.getElementById('cli-anthropic-key').value;
+            if (googleKey) {
+                cliEnv['GOOGLE_API_KEY'] = googleKey;
+                cliEnv['GEMINI_API_KEY'] = googleKey;
+            }
+            if (anthropicKey) {
+                cliEnv['ANTHROPIC_API_KEY'] = anthropicKey;
+            }
 
             const config = {
                 mcp: {
@@ -386,7 +440,8 @@
                     base_url: document.getElementById('ai-url').value,
                     api_key: document.getElementById('ai-key').value,
                     model: document.getElementById('ai-model').value,
-                    cli_command: document.getElementById('ai-cli').value
+                    cli_command: cliCommand,
+                    cli_env: cliEnv
                 },
                 comment: {
                     enabled: document.getElementById('comment-status').textContent === '开启',
@@ -425,6 +480,7 @@
         fetchStatus();
         setInterval(fetchStatus, 5000);
         toggleAIMode(); // 初始化 AI 模式显示
+        updateCLIPreset(); // 初始化 CLI 预设显示
     </script>
 </body>
 </html>
