@@ -80,9 +80,11 @@ type SearchResult struct {
 	Success bool `json:"success"`
 	Data    struct {
 		Feeds []struct {
-			FeedID    string `json:"feed_id"`
-			XsecToken string `json:"xsec_token"`
-			Title     string `json:"title"`
+			ID        string `json:"id"`
+			XsecToken string `json:"xsecToken"`
+			NoteCard  struct {
+				DisplayTitle string `json:"displayTitle"`
+			} `json:"noteCard"`
 		} `json:"feeds"`
 	} `json:"data"`
 }
@@ -519,7 +521,7 @@ func searchFeeds(keyword string) ([]struct {
 			FeedID    string
 			XsecToken string
 			Title     string
-		}{f.FeedID, f.XsecToken, f.Title})
+		}{f.ID, f.XsecToken, f.NoteCard.DisplayTitle})
 	}
 	return feeds, nil
 }
