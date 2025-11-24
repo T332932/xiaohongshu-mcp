@@ -170,9 +170,11 @@ func (s *SearchAction) Search(ctx context.Context, keyword string, filters ...Fi
 
 	searchURL := makeSearchURL(keyword)
 	page.MustNavigate(searchURL)
-	page.MustWaitStable()
 
-	page.MustWait(`() => window.__INITIAL_STATE__ !== undefined`)
+	// 只等待数据加载完成，不等待页面完全稳定（太慢）
+	page.MustWait(`() => window.__INITIAL_STATE__ !== undefined &&
+		window.__INITIAL_STATE__.search &&
+		window.__INITIAL_STATE__.search.feeds`)
 
 	// 如果有筛选条件，则应用筛选
 	if len(filters) > 0 {
