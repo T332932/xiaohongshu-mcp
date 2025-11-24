@@ -523,6 +523,13 @@ func searchFeeds(keyword string) ([]struct {
 			Title     string
 		}{f.ID, f.XsecToken, f.NoteCard.DisplayTitle})
 	}
+
+	// 调试日志
+	if len(feeds) > 0 {
+		log.Infof("调试: 第一个帖子 - ID=%s, XsecToken=%s, Title=%s",
+			feeds[0].FeedID, feeds[0].XsecToken, feeds[0].Title)
+	}
+
 	return feeds, nil
 }
 
