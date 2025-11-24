@@ -171,10 +171,15 @@ func (s *SearchAction) Search(ctx context.Context, keyword string, filters ...Fi
 	searchURL := makeSearchURL(keyword)
 	page.MustNavigate(searchURL)
 
-	// 只等待数据加载完成，不等待页面完全稳定（太慢）
+	// 使用和 list_feeds 一样的方式：等待 DOM 稳定
+	page.MustWaitDOMStable()
+
+	// 等待数据加载完成
 	page.MustWait(`() => window.__INITIAL_STATE__ !== undefined &&
 		window.__INITIAL_STATE__.search &&
 		window.__INITIAL_STATE__.search.feeds`)
+
+	time.Sleep(500 * time.Millisecond) // 短暂等待确保数据完整
 
 	// 如果有筛选条件，则应用筛选
 	if len(filters) > 0 {
