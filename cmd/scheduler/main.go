@@ -311,7 +311,7 @@ func checkLoginStatus() bool {
 	var result struct {
 		Success bool `json:"success"`
 		Data    struct {
-			LoggedIn bool `json:"logged_in"`
+			LoggedIn bool `json:"is_logged_in"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -327,33 +327,39 @@ func doComment() error {
 	// 搜索多个关键词的帖子
 	var allPosts []PostInfo
 	skippedCount := 0
+	maxPostsPerKeyword := 10 // 每个关键词最多处理10个帖子
+	maxTotalPosts := 20      // 总共最多处理20个帖子
+
 	for _, keyword := range config.Comment.SearchKeywords {
+		if len(allPosts) >= maxTotalPosts {
+			break
+		}
 		feeds, err := searchFeeds(keyword)
 		if err != nil {
 			log.Warnf("搜索关键词 %s 失败: %v", keyword, err)
 			continue
 		}
+		log.Infof("关键词 %s 找到 %d 个帖子", keyword, len(feeds))
+
+		postsFromKeyword := 0
 		for _, f := range feeds {
+			if postsFromKeyword >= maxPostsPerKeyword || len(allPosts) >= maxTotalPosts {
+				break
+			}
 			// 跳过已评论的帖子
 			if isCommented(f.FeedID) {
 				skippedCount++
 				continue
 			}
-			// 获取帖子详情
-			detail, err := getFeedDetail(f.FeedID, f.XsecToken)
-			desc := ""
-			title := f.Title
-			if err == nil {
-				desc = detail.Data.Description
-				title = detail.Data.Title
-			}
+			// 直接使用搜索结果中的标题，不再获取详情（太慢）
 			allPosts = append(allPosts, PostInfo{
 				Index:       len(allPosts),
 				FeedID:      f.FeedID,
 				XsecToken:   f.XsecToken,
-				Title:       title,
-				Description: desc,
+				Title:       f.Title,
+				Description: "",
 			})
+			postsFromKeyword++
 		}
 	}
 
